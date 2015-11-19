@@ -10,6 +10,8 @@
 #include <ctime>        // std::time
 #include <cstdlib>      // std::rand, std::srand
 #include <set>
+#include <mutex>
+#include <thread>
 
 //______________________________________________________________________________
 //complementary functions declaration...........................................
@@ -45,7 +47,8 @@ struct KMedians
 {
 	int					nbCenters_,
 						dimension_		= -1,
-						maxIterations_	= 10000;
+						maxIterations_	= 10000,
+						nbThread		= 1;
 	
 	bool				nullWord_;
 
@@ -65,10 +68,11 @@ struct KMedians
 	KMedians(){}
 	~KMedians(){}
 	//Main funtions.............................................................
-	void				init_centers();
-	int					makeAssigment();
-	void				computeDistance();
-
+	void				init_centers	();
+	int					makeAssigment	();
+	void				computeDistance	();
+	//Support functions.........................................................
+	void				computeDistanceFor(int, int);
 };
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -312,9 +316,57 @@ int KMedians::makeAssigment()
 	}
 */
 
+////////////////////////////////////////////////////////////////////////////////
+//suplmentary function to run the threads 
+std::mutex val_mutex;
+void KMedians::computeDistanceFor(int ini, int fin)
+{
+	for (int i = ini; i < fin; ++i)
+	{
+		for (int c = 0; c < centers_.rows; ++c)
+		{
+			//if center didn't move, continue
+			if(!hasMoved_[c])
+				continue;
+				
+			//if hasn't points in it, continue;
+			if(populationInCluster_[c] == 0)
+			{
+				val_mutex.lock();
+				distanceMatrix_(i,c) = FLT_MAX;
+				val_mutex.unlock();
+				continue;
+			}
+			
+			auto	p		= points_.row(i);
+			auto	center	= centers_.row(c);
+			double	distance = 0;
+			for (int d = 0; d < dimension_; ++d)
+			{
+				//Alterado: Verifica se o centro é NaN pois, se não verificar, na tranformação para int o NaN vira Zero e afeta no próximo if
+				/*if(Double.isNaN(center[d])) {
+					distance = Double.NaN;
+					break; //break pois se o primeiro valor do centro ja é NaN o resto também é NaN
+				}
+				else {
+					distance += hammingDistance( (p[d]& 0xff), (((int)center[d]) & 0xff) );	
+				}*/
+			}
+		}
+	}
+}
+//main computed distace, this function controls the threads 
 void KMedians::computeDistance()
 {
-
+	int range	= points_.rows / nbThread,
+		n		= 0;
+	std::vector<std::thread> vt;
+	for (; n < points_.rows; n += range)
+		vt.push_back(std::thread ( &KMedians::computeDistanceFor , this, n, n + range) );
+	vt.push_back(std::thread ( &KMedians::computeDistanceFor , this, n, points_.rows) );
+	for (auto & it: vt){
+		it.join();
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
