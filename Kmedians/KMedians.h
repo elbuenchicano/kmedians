@@ -16,6 +16,7 @@
 //______________________________________________________________________________
 //complementary functions declaration...........................................
 int		kmed_hammingDistanceInt(const int x, const int y);
+template<class t> void	fillMatRow(cv::Mat_<t> & src, int row, t val);
 //______________________________________________________________________________
 // ORIGINAL CLASS, DECALRATION VARIABLE......................................
 /*private static final long serialVersionUID = -253576488350574703L;
@@ -71,6 +72,8 @@ struct KMedians
 	void				init_centers	();
 	int					makeAssigment	();
 	void				computeDistance	();
+	void				computeCenters	();
+	void				computeCentersMedian	();
 	//Support functions.........................................................
 	void				computeDistanceFor(int, int);
 };
@@ -344,13 +347,12 @@ void KMedians::computeDistanceFor(int ini, int fin)
 			for (int d = 0; d < dimension_; ++d)
 			{
 				//Alterado: Verifica se o centro é NaN pois, se não verificar, na tranformação para int o NaN vira Zero e afeta no próximo if
-				/*if(Double.isNaN(center[d])) {
-					distance = Double.NaN;
+				if( center(0,d) == NAN) {
+					distance = NAN;
 					break; //break pois se o primeiro valor do centro ja é NaN o resto também é NaN
 				}
-				else {
-					distance += hammingDistance( (p[d]& 0xff), (((int)center[d]) & 0xff) );	
-				}*/
+				else 
+					distance += kmed_hammingDistanceInt( p(0,d) & 0xff,  (int)center(0,d) & 0xff );	
 			}
 		}
 	}
@@ -368,13 +370,167 @@ void KMedians::computeDistance()
 		it.join();
 	}
 }
+////////////////////////////////////////////////////////////////////////////////
+//Este é para a média
+/*	private void computeCenters() {
+		for(int c = 0 ; c < centers.length; c++)
+		{
+			if(!hasMoved[c])
+				continue;
+			if(populationInCluster[c] == 0)
+			{
+				Arrays.fill(centers[c], Double.NaN);
+				continue;
+			}
+			
+			int nbp = 0;
+			Arrays.fill(centers[c], 0);
+			for(int i = 0 ; i < points.length; i++)
+			{
+				if(pointAssignedToCenter[i] == c)
+				{
+					for(int d = 0 ; d < dimension; d++)
+						centers[c][d] += points[i][d];
+					nbp++;
+				}
+			}
+
+			if(nbp > 0)
+				for(int d = 0 ; d < dimension; d++)
+					centers[c][d] = (int)(centers[c][d] / nbp); //Alterado para int truncando para zero assim como no Bag OF Binary Descriptors
+			else
+				Arrays.fill(centers[c], Double.NaN);
+		}
+	}
+	*/
+void KMedians::computeCenters()
+{
+	for (int c = 0; c < centers_.rows; ++c)
+	{
+		if (!hasMoved_[c])	continue;
+		if (populationInCluster_[c] == 0){
+			fillMatRow<float>(centers_, c, NAN);
+			continue;
+		}
+		int nbp = 0;
+		fillMatRow<float>(centers_, c, 0);
+		for (int i = 0; i < points_.rows; ++i){
+			if (pointAssignedToCenter_[i] == c){
+				for (int d = 0; d < dimension_; ++d)
+					centers_(c,d) += points_(i,d);
+				++nbp;
+			}
+		}
+		if (nbp > 0)
+		{
+			for (int d = 0; d < dimension_; ++d)
+				centers_(c, d) = (int)(centers_(c, d) / nbp); //Alterado para int truncando para zero assim como no Bag OF Binary Descriptors
+		}
+		else
+			fillMatRow<float>(centers_, c, NAN);
+	}
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+/*
+private void computeCentersMedian() {
+		for (int c = 0; c < centers.length; c++) {
+
+			if (!hasMoved[c])
+				continue;
+			if (populationInCluster[c] == 0) {
+				Arrays.fill(centers[c], Double.NaN);
+				continue;
+			}
+			
+			ArrayList<PairIndexDescriptor<Integer, int[]>> listPointsInClusterC = new ArrayList<PairIndexDescriptor<Integer, int[]>>();
+			
+			//seleciona todos os pontos do clusters C
+			for (int i = 0; i < points.length; i++)
+				if (pointAssignedToCenter[i] == c){
+					PairIndexDescriptor<Integer, int[]> indexDesc = new PairIndexDescriptor<Integer, int[]>(i, points[i]);
+					listPointsInClusterC.add(indexDesc);
+				}
+			
+			//calcula a distância entre todos os pontos do cluster C
+			//int distanceMatrixCluster[][] = new int[listPointsInClusterC.size()][listPointsInClusterC.size()];
+			int distanceSums[] = new int[listPointsInClusterC.size()];
+	
+			for(int i = 0; i < listPointsInClusterC.size(); i++)
+			{
+				//distanceMatrixCluster[i][i] = 0;
+				for(int j = i+1; j < listPointsInClusterC.size(); j++)
+				{
+					int distance = 0;
+					for(int d = 0; d < dimension; d++)
+					{
+						int descI[] = listPointsInClusterC.get(i).Descriptor;
+						int descJ[] = listPointsInClusterC.get(j).Descriptor;
+						distance += hammingDistance( (((int)descI[d]) & 0xff), (((int)descJ[d]) & 0xff) );
+					}
+					
+					//distanceMatrixCluster[i][j] = distance;
+					//distanceMatrixCluster[j][i] = distance;
+					
+					//distanciâs acumuladas
+					distanceSums[i] += distance;
+					distanceSums[j] += distance;
+				}
+			}
+			
+			int newCenter = -1;
+			int shortDist = Integer.MAX_VALUE;
+			//Seleciona a mediana do cluster C:
+			//É o ponto que minimiza a soma das distâncias aos demais elementos do mesmo cluster
+			for(int i = 0; i < distanceSums.length; i++)
+			{
+				if(distanceSums[i] < shortDist)
+				{
+					shortDist = distanceSums[i];
+					newCenter = i;
+				}
+			}
+			
+			int newCenterDesc[] = listPointsInClusterC.get(newCenter).Descriptor;
+			for (int j = 0; j < newCenterDesc.length; j++) {
+				centers[c][j] = newCenterDesc[j];
+			}
+			
+		}
+	}
+*/
+
+void KMedians::computeCentersMedian()
+{
+	for (int c = 0; c < centers_.rows; ++c){
+		if (!hasMoved_[c])	continue;
+		if (populationInCluster_[c] == 0){
+			fillMatRow<float>(centers_, c, NAN);
+			continue;
+		}
+		//ArrayList<PairIndexDescriptor<Integer, int[]>> listPointsInClusterC = new ArrayList<PairIndexDescriptor<Integer, int[]>>();
+
+	}
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////Complementary functions/////////////////////////////////////
 //simple binary hamming distance between two integers
-int kmed_hammingDistanceInt(const int x, const int y){
+int kmed_hammingDistanceInt(int x, int y){
 	int dist = 0;
 	for ( int val = (x ^ y); val; ++dist ) val &= val - 1;		
 	return dist;
+}
+//fill matrix row
+template<class t>
+void fillMatRow(cv::Mat_<t> & src, int row, t val)
+{
+	if (row < src.rows)
+		for (int i = 0; i < src.cols; ++i)
+			src(row, i) = val;
 }
