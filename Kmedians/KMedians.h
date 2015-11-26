@@ -21,7 +21,7 @@ template<class t> void	fillMatRow(cv::Mat_<t> & src, int row, t val);
 // ORIGINAL CLASS, DECALRATION VARIABLE......................................
 /*private static final long serialVersionUID = -253576488350574703L;
 
-	private int nbThread = 1;
+	private int nbThread_ = 1;
 	
 	int[][] points;
 	double[][] centers;
@@ -46,28 +46,29 @@ template<class t> void	fillMatRow(cv::Mat_<t> & src, int row, t val);
 
 struct KMedians
 {
-	int					nbCenters_,
-						dimension_		= -1,
-						maxIterations_	= 10000,
-						nbThread		= 1;
+	int       					nbCenters_,
+						          dimension_		  = -1,
+						          maxIterations_	= 10000,
+						          nbThread_		    = 1;
 	
-	bool				nullWord_;
+	bool				        nullWord_;
 
-	std::vector<bool>	hasMoved_;
-	cv::Mat_<int>		points_;
-	cv::Mat_<float>		centers_,
-						distanceMatrix_;
+	std::vector<bool>	  hasMoved_;
+	cv::Mat_<int>		    points_;
+	cv::Mat_<float>		  centers_,
+						          distanceMatrix_;
 	
 	std::vector<double>	meanDistance_;
-	std::vector<int>	populationInCluster_,
-						centerPoint_,
-						pointAssignedToCenter_;
+	std::vector<int>	  populationInCluster_,
+						          centerPoint_,
+						          pointAssignedToCenter_;
 	using ArrayListInt  = std::vector<std::vector<int> >;
-	ArrayListInt		pointsInCluster_;
-	cv::RNG				ran;
+	ArrayListInt		    pointsInCluster_;
+	cv::RNG				      ran_;
 	//Constructor destructor....................................................
-	KMedians(){}
-	~KMedians(){}
+  KMedians  ( cv::Mat_<int>, int, int, int, cv::RNG );
+	KMedians  (){}
+	~KMedians (){}
 	//Main funtions.............................................................
 	void				init_centers	();
 	int					makeAssigment	();
@@ -76,12 +77,84 @@ struct KMedians
 	void				computeCentersMedian	();
 	//Support functions.........................................................
 	void				computeDistanceFor(int, int);
+  
 };
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////main functions//////////////////////////////////////////////
 
+KMedians::KMedians(cv::Mat_<int> points, int nbCenters, int maxIterations, int nbThreads, cv::RNG r) :
+points_(points),
+nbCenters_(nbCenters),
+maxIterations_(maxIterations),
+nbThread_(nbThreads),
+ran_(r)
+{
 
+  init_centers();
+  std::cout << "Starting clustering with " << nbThread_ << "threads.\n";
+  int nbMoves   = 0,
+      iteration = 1;
+  do{
+    computeCentersMedian();
+    //compute distance
+    computeDistance();
+    //number of moving centers
+    int nbmc = 0;
+    for (int c = 0; c < centers_.rows; ++c){
+      if (hasMoved_[c])
+        ++nbmc;
+    }
+    std::cout << "iteration " << nbMoves << " points moved " << nbmc << " centers moved.\n";
+  } while (nbMoves != 0 && ++iteration < maxIterations_);
+  std::cout << "\n Clustering done, cleaning ....\n";
+  std::fill(meanDistance_.begin(), meanDistance_.end(), 0);
+  for (int c = 0; c < centers_.rows; ++c){
+    int nbp = 0;
+    for (int i = 0; i < points_.rows; ++i){
+      if (pointAssignedToCenter_[i] == c){
+        meanDistance_[c] += distanceMatrix_(i,c);
+        ++nbp;
+      }
+    }
+    if (nbp > 0)
+      meanDistance_[c] /= (double)nbp;
+  }
+  //cleaning empty clusters 
+  std::vector< cv::Mat_<float> >  listOfCenters;
+  std::vector< double >       listOfMeanDist;
+  std::vector< int >          listOfPopulation;
+  for (int c = 0; c < centers_.rows; ++c){
+    listOfCenters.push_back(centers_.row(c));
+    listOfMeanDist.push_back(meanDistance_[c]);
+    listOfPopulation.push_back(populationInCluster_[c]);
+  }
+  std::set < int > listP;
+  for (int c = 0; c < centers_.rows; ++c)
+  {
+    float min       = FLT_MAX;
+    int   pointMin  = -1;
+    for (int i = 0; i < points_.rows; ++i){
+      if (pointAssignedToCenter_[i] == c){
+        if (min > distanceMatrix_(i, c)){
+          min       = distanceMatrix_(i, c);
+          pointMin  = i;
+        }
+      }
+    }
+    if (listP.find(pointMin) != listP.end())
+      listP.insert(pointMin);
+    if (pointMin != -1){
+      for (int j = 0; j < points.cols; ++j){
+        centers_(c, j) = points(pointMin, j);
+      }
+    }
+  }
+  std::cout << "Cleaning done. Clusters are ready.\n";
+}
+
+
+ //////////////////////////////////////////////////////////////////////////////// 
 /*
 	private void initCenters()
 	{
@@ -148,9 +221,9 @@ void KMedians::init_centers(){
 	//pick a random point for each cluster
 	for (int i = 0; i < centers_.rows; ++i)
 	{
-		int indexPoint = ran.uniform(0, points_.rows);
+		int indexPoint = ran_.uniform(0, points_.rows);
 		while ( listRandom.find(indexPoint) != listRandom.end() )
-			indexPoint = ran.uniform(0, points_.rows);
+			indexPoint = ran_.uniform(0, points_.rows);
 		listRandom.insert(indexPoint);
 		pointAssignedToCenter_[indexPoint] = i;
 		++populationInCluster_[i];
@@ -254,7 +327,7 @@ int KMedians::makeAssigment()
 ////////////////////////////////////////////////////////////////////////////////
 /*private void computeDistance() {
 		
-		ExecutorService es = Executors.newFixedThreadPool(nbThread);
+		ExecutorService es = Executors.newFixedThreadPool(nbThread_);
 
 		List<Callable<Object>> tasks = new ArrayList<Callable<Object>>();
 		
@@ -360,7 +433,7 @@ void KMedians::computeDistanceFor(int ini, int fin)
 //main computed distace, this function controls the threads 
 void KMedians::computeDistance()
 {
-	int range	= points_.rows / nbThread,
+	int range	= points_.rows / nbThread_,
 		n		= 0;
 	std::vector<std::thread> vt;
 	for (; n < points_.rows; n += range)
@@ -515,6 +588,8 @@ void KMedians::computeCentersMedian()
 
 	}
 }
+
+ ////////////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////////////////////////////
