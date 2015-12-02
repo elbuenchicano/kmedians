@@ -66,8 +66,8 @@ struct KMedians
 	ArrayListInt		    pointsInCluster_;
 	cv::RNG				      ran_;
 	//Constructor destructor....................................................
-  KMedians  ( cv::Mat_<int>, int, int, int, cv::RNG );
-	KMedians  (){}
+  KMedians  ( cv::Mat_<int> &, int, int, int, cv::RNG );
+  KMedians  (){}
 	~KMedians (){}
 	//Main funtions.............................................................
 	void				init_centers	();
@@ -83,7 +83,7 @@ struct KMedians
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////main functions//////////////////////////////////////////////
 
-KMedians::KMedians(cv::Mat_<int> points, int nbCenters, int maxIterations, int nbThreads, cv::RNG r) :
+KMedians::KMedians(cv::Mat_<int> & points, int nbCenters, int maxIterations, int nbThreads, cv::RNG r) :
 points_(points),
 nbCenters_(nbCenters),
 maxIterations_(maxIterations),
@@ -99,13 +99,15 @@ ran_(r)
     computeCentersMedian();
     //compute distance
     computeDistance();
+    //make asignment
+    nbMoves = makeAssigment();
     //number of moving centers
     int nbmc = 0;
     for (int c = 0; c < centers_.rows; ++c){
       if (hasMoved_[c])
         ++nbmc;
     }
-    std::cout << "iteration " << nbMoves << " points moved " << nbmc << " centers moved.\n";
+    std::cout << "iteration " << iteration << ", "<< nbMoves << " points moved " << nbmc << " centers moved.\n";
   } while (nbMoves != 0 && ++iteration < maxIterations_);
   std::cout << "\n Clustering done, cleaning ....\n";
   std::fill(meanDistance_.begin(), meanDistance_.end(), 0);
@@ -150,6 +152,7 @@ ran_(r)
       }
     }
   }
+  
   std::cout << "Cleaning done. Clusters are ready.\n";
 }
 
@@ -207,29 +210,46 @@ ran_(r)
 */
 
 void KMedians::init_centers(){
-	pointsInCluster_.resize(nbCenters_);
-	dimension_	= points_.cols;
-	centers_.create(nbCenters_, dimension_);
-	meanDistance_.resize(nbCenters_);
-	populationInCluster_.resize(centers_.rows, 0);
-	//_________________________________________________________________________
-	//random assiggmnet 
-	std::cout << "Initializing centers...\n";
-	pointAssignedToCenter_.resize(points_.rows,-1);			//-1 = no assig.
-	std::set<int>	listRandom;
-	//_________________________________________________________________________
-	//pick a random point for each cluster
-	for (int i = 0; i < centers_.rows; ++i)
-	{
-		int indexPoint = ran_.uniform(0, points_.rows);
-		while ( listRandom.find(indexPoint) != listRandom.end() )
-			indexPoint = ran_.uniform(0, points_.rows);
-		listRandom.insert(indexPoint);
-		pointAssignedToCenter_[indexPoint] = i;
-		++populationInCluster_[i];
-		if (i % (centers_.rows / 20 + 1) == 0)
-            std::cout << "." << std::endl;
-	}
+  pointsInCluster_.resize(nbCenters_);
+  dimension_ = points_.cols;
+  centers_.create(nbCenters_, dimension_);
+  meanDistance_.resize(nbCenters_);
+  populationInCluster_.resize(centers_.rows);
+  std::fill(populationInCluster_.begin(), populationInCluster_.end(), 0);
+  //_________________________________________________________________________
+  //random assiggmnet 
+  std::cout << "Initializing centers...\n";
+  pointAssignedToCenter_.resize(points_.rows, -1);			//-1 = no assig.
+  //std::set<int>	listRandom;
+  //_________________________________________________________________________
+  //pick a random point for each cluster
+  /*for (int i = 0; i < centers_.rows; ++i)
+  {
+    int indexPoint = ran_.uniform(0, points_.rows-1);
+
+    while ( listRandom.find(indexPoint) != listRandom.end() )
+    indexPoint = ran_.uniform(0, points_.rows-1);
+    listRandom.insert(indexPoint);
+    pointAssignedToCenter_[indexPoint] = i;
+    ++populationInCluster_[i];
+    if (i % (centers_.rows / 20 + 1) == 0)
+    std::cout << "." << std::endl;
+  }*/
+  
+  //*************************************corrigir***************************
+  //valido o codgiode acima
+  //danger code
+  std::vector<int > listRandom { 13992, 3904, 15745, 18515, 13715, 8057, 15047, 11937, 5883, 4862};
+  auto it = listRandom.begin();
+  for (int i = 0 ; i < centers_.rows; ++i)
+  {
+      pointAssignedToCenter_[*it] = i;
+      ++populationInCluster_[i];
+      if (i % (centers_.rows / 20 + 1) == 0)
+        std::cout << "." << std::endl;
+      ++it;
+  }
+
 	distanceMatrix_.create(points_.rows, centers_.rows);
 	hasMoved_.resize(centers_.rows, true);
 	std::cout << "\nCenters randomly initialized\n";
@@ -397,6 +417,7 @@ int KMedians::makeAssigment()
 std::mutex val_mutex;
 void KMedians::computeDistanceFor(int ini, int fin)
 {
+  if (ini >= fin) return;
 	for (int i = ini; i < fin; ++i)
 	{
 		for (int c = 0; c < centers_.rows; ++c)
@@ -424,9 +445,14 @@ void KMedians::computeDistanceFor(int ini, int fin)
 					distance = NAN;
 					break; //break pois se o primeiro valor do centro ja é NaN o resto também é NaN
 				}
-				else 
-					distance += kmed_hammingDistanceInt( p(0,d) & 0xff,  (int)center(0,d) & 0xff );	
+        else {
+          auto x = kmed_hammingDistanceInt( p(0,d) & 0xff,  (int)center(0,d) & 0xff );	
+          distance += x;
+        }
 			}
+      if (distance == NAN)
+        distance == FLT_MAX;
+      distanceMatrix_(i, c) = distance;
 		}
 	}
 }
@@ -434,14 +460,16 @@ void KMedians::computeDistanceFor(int ini, int fin)
 void KMedians::computeDistance()
 {
 	int range	= points_.rows / nbThread_,
-		n		= 0;
-	std::vector<std::thread> vt;
-	for (; n < points_.rows; n += range)
-		vt.push_back(std::thread ( &KMedians::computeDistanceFor , this, n, n + range) );
-	vt.push_back(std::thread ( &KMedians::computeDistanceFor , this, n, points_.rows) );
-	for (auto & it: vt){
-		it.join();
-	}
+    	n		  = 0;
+ //std::vector<std::thread> vt;
+ // for (; n < points_.rows; n += range){
+ //   vt.push_back(std::thread(&KMedians::computeDistanceFor, this, n, n + range));
+  computeDistanceFor(0, points_.rows);
+ // }
+//	vt.push_back(std::thread ( &KMedians::computeDistanceFor , this, n, points_.rows) );
+//	for (auto & it: vt){
+//		it.join();
+//	}
 }
 ////////////////////////////////////////////////////////////////////////////////
 //Este é para a média
@@ -574,17 +602,82 @@ private void computeCentersMedian() {
 			
 		}
 	}
-*/
+
+  public class PairIndexDescriptor<T1, T2> {
+    public final T1 Index;
+    public final T2 Descriptor;
+
+    public PairIndexDescriptor(T1 i, T2 d) {
+      this.Index = i;
+      this.Descriptor = d;
+	}
+
+}
+  */
+//classe do codigo de carlos
+template <class T1, class T2>
+class PairIndexDescriptor
+{
+public:
+  T1 index_;
+  T2 descriptor_;
+
+  PairIndexDescriptor(T1 index, T2 descriptor) :
+  index_(index),
+  descriptor_(descriptor){}
+  ~PairIndexDescriptor(){}
+};
+
 
 void KMedians::computeCentersMedian()
 {
 	for (int c = 0; c < centers_.rows; ++c){
+
 		if (!hasMoved_[c])	continue;
-		if (populationInCluster_[c] == 0){
+		
+    if (populationInCluster_[c] == 0){
 			fillMatRow<float>(centers_, c, NAN);
 			continue;
 		}
-		//ArrayList<PairIndexDescriptor<Integer, int[]>> listPointsInClusterC = new ArrayList<PairIndexDescriptor<Integer, int[]>>();
+    using Tpair = PairIndexDescriptor< int, cv::Mat_< int > >;
+    std::vector< Tpair > listPointsInClusterC;
+
+    //selecciona todos os pontos do clusters C 
+    for (int i = 0; i < points_.rows; ++i){
+      if (pointAssignedToCenter_[i] == c)
+        listPointsInClusterC.push_back( Tpair( i, points_.row(i) ) );
+    }
+    //calcula a distância entre todos os pontos do cluster C
+    std::vector< int > distanceSums(listPointsInClusterC.size());
+    for (size_t i = 0; i < listPointsInClusterC.size(); ++i){
+      for (size_t j = i + 1; j < listPointsInClusterC.size(); ++j){
+        int distance = 0;
+        for (int d = 0; d < dimension_; ++d){
+          int descI = listPointsInClusterC[i].descriptor_(0,d) & 0xff,
+              descJ = listPointsInClusterC[j].descriptor_(0,d) & 0xff;
+          distance += kmed_hammingDistanceInt(descI, descJ);
+        }
+        //distâncias acumuladas
+        distanceSums[i] += distance;
+        distanceSums[j] += distance;
+      }
+    }
+
+    int newCenter = -1,
+        shortDist = INT_MAX;
+    //Seleciona a mediana do cluster C:
+		//É o ponto que minimiza a soma das distâncias aos demais elementos do mesmo cluster
+    for (size_t i = 0; i < distanceSums.size(); ++i){
+      if (distanceSums[i] < shortDist){
+        shortDist = distanceSums[i];
+        newCenter = i;
+      }
+    }
+
+    cv::Mat_< int > newCenterDesc = listPointsInClusterC[newCenter].descriptor_;
+    for (int j = 0; j < newCenterDesc.cols; ++j){
+      centers_(c, j) = newCenterDesc(0, j);
+    }
 
 	}
 }
